@@ -1,133 +1,137 @@
+local QBCore = exports['qb-core']:GetCoreObject()
+
 local isHunting = false
 local currentStage = 0
 local huntCoords = {}
 local blip = nil
 
 
--- Configure these to your liking
-local clues = {
-    "The map shows an old tree by the coast...",
-    "The map points to a rocky hilltop...",
-    "The trail leads to a ruined shack...",
-    "The map hints at a lonely bridge...",
-    "The drawing shows a pier full of seagulls..."
-}
-
--- Configure these to your liking
-local locations = {
-    vector3(-1600.0, 5260.0, 4.0),
-    vector3(-1378.0, 6752.0, 3.0),
-    vector3(2440.0, -1835.0, 51.5),
-    vector3(2000.0, 3000.0, 45.0),
-    vector3(-1000.0, 4400.0, 50.0)
-}
-
--- Dont touch below here.
-
 function StartTreasureHunt()
     if isHunting then
-        QBCore.Functions.Notify("You are already on a hunt!", "error")
+        QBCore.Functions.Notify('You are already on a treasure hunt!', 'error')
         return
     end
 
     isHunting = true
-    currentStage = 1
-    huntCoords = ShuffleLocations(Config.Stages)
-
+    currentStage = 0
+    huntCoords = GenerateHuntLocations()
     NextClue()
 end
 
 function NextClue()
-    if currentStage > Config.Stages then
-        -- Final treasure
-        CreateTreasure(huntCoords[currentStage - 1])
-        return
+    currentStage = currentStage + 1
+
+    if blip then
+        RemoveBlip(blip)
     end
 
-    if blip then RemoveBlip(blip) end
+    if currentStage <= #huntCoords then
+        local coords = huntCoords[currentStage]
+        blip = AddBlipForCoord(coords.x, coords.y, coords.z)
+        SetBlipSprite(blip, 280)
+        SetBlipColour(blip, 5)
+        SetBlipScale(blip, 0.8)
+        BeginTextCommandSetBlipName("STRING")
+        AddTextComponentString("Treasure Clue")
+        EndTextCommandSetBlipName(blip)
 
-    local coords = huntCoords[currentStage]
-    blip = AddBlipForCoord(coords)
-    SetBlipSprite(blip, 587)
-    SetBlipScale(blip, 0.7)
-    SetBlipColour(blip, 5)
-    BeginTextCommandSetBlipName("STRING")
-    AddTextComponentString("Treasure Clue")
-    EndTextCommandSetBlipName(blip)
+        CreateThread(function()
+            local reached = false
+            while not reached do
+                Wait(500)
+                local playerCoords = GetEntityCoords(PlayerPedId())
+                if #(playerCoords - vector3(coords.x, coords.y, coords.z)) < 3.0 then
+                    reached = true
+                    QBCore.Functions.Notify('You found a clue!', 'success')
+                    Wait(1500)
+                    NextClue()
+                end
+            end
+        end)
 
-    local clueText = clues[math.random(#clues)]
-    QBCore.Functions.Notify(clueText, "primary")
-
-    CreateThread(function()
-        local playerPed = PlayerPedId()
-        while #(GetEntityCoords(playerPed) - coords) > 3.0 do
-            Wait(1000)
-        end
-
-        currentStage = currentStage + 1
-        NextClue()
-    end)
+    else
+        FinishHunt()
+    end
 end
 
-function CreateTreasure(coords)
-    if blip then RemoveBlip(blip) end
-
-    local prop = nil
-    if Config.SpawnProp then
-        RequestModel(Config.PropModel)
-        while not HasModelLoaded(Config.PropModel) do
-            Wait(10)
-        end
-        prop = CreateObject(Config.PropModel, coords.x, coords.y, coords.z - 1.0, true, true, false)
-        PlaceObjectOnGroundProperly(prop)
+function FinishHunt()
+    if blip then
+        RemoveBlip(blip)
     end
 
-    local treasureBlip = AddBlipForCoord(coords)
-    SetBlipSprite(treasureBlip, 587)
-    SetBlipScale(treasureBlip, 1.0)
-    SetBlipColour(treasureBlip, 46)
-    BeginTextCommandSetBlipName("STRING")
-    AddTextComponentString("Buried Treasure")
-    EndTextCommandSetBlipName(treasureBlip)
+    local finalCoords = huntCoords[#huntCoords]
 
-    QBCore.Functions.Notify("You sense the treasure nearby!", "success")
-
-    CreateThread(function()
-        local playerPed = PlayerPedId()
-        while #(GetEntityCoords(playerPed) - coords) > 3.0 do
-            Wait(1000)
-        end
-
-        TriggerServerEvent("treasurehunt:reward")
-        if prop then DeleteEntity(prop) end
-        if treasureBlip then RemoveBlip(treasureBlip) end
-
-        isHunting = false
-    end)
-end
-
-function ShuffleLocations(amount)
-    local temp = {}
-    local copy = {table.unpack(locations)}
-    for i = 1, amount do
-        local index = math.random(#copy)
-        table.insert(temp, copy[index])
-        table.remove(copy, index)
+    RequestModel(GetHashKey(Config.TreasureProp))
+    while not HasModelLoaded(GetHashKey(Config.TreasureProp)) do
+        Wait(10)
     end
-    return temp
+
+    local chest = CreateObject(GetHashKey(Config.TreasureProp), finalCoords.x, finalCoords.y, finalCoords.z - 1.0, true, true, true)
+    SetEntityHeading(chest, math.random(0, 360))
+    FreezeEntityPosition(chest, true)
+
+    if Config.UseTarget then
+        exports['qb-target']:AddTargetEntity(chest, {
+            options = {
+                {
+                    label = 'Open Treasure',
+                    action = function()
+                        ClaimReward(chest)
+                    end,
+                }
+            },
+            distance = 2.5
+        })
+    else
+        CreateThread(function()
+            local opened = false
+            while not opened do
+                local playerCoords = GetEntityCoords(PlayerPedId())
+                if #(playerCoords - GetEntityCoords(chest)) < 2.0 then
+                    DrawText3D(finalCoords.x, finalCoords.y, finalCoords.z + 1.0, "Press ~g~E~w~ to open the treasure")
+                    if IsControlJustReleased(0, 38) then
+                        opened = true
+                        ClaimReward(chest)
+                    end
+                end
+                Wait(0)
+            end
+        end)
+    end
 end
 
-RegisterNetEvent('treasurehunt:useMap', function()
-    StartTreasureHunt()
-end)
+function ClaimReward(chest)
+    DeleteEntity(chest)
+    TriggerServerEvent('vd-treasurehunt:giveReward')
+    QBCore.Functions.Notify('You found the treasure!', 'success')
+    isHunting = false
+end
+
+function GenerateHuntLocations()
+    local locations = {}
+    local all = Config.HuntLocations
+    local used = {}
+
+    for i = 1, Config.LocationsAmount do
+        local rand = math.random(1, #all)
+        while used[rand] do
+            rand = math.random(1, #all)
+        end
+        used[rand] = true
+        table.insert(locations, all[rand])
+    end
+
+    return locations
+end
 
 CreateThread(function()
     if Config.UseNPC then
-        RequestModel(Config.NPCModel)
-        while not HasModelLoaded(Config.NPCModel) do
-            Wait(0)
+        RequestModel(Config.PirateNPCModel)
+        while not HasModelLoaded(Config.PirateNPCModel) do
+            Wait(10)
         end
-        local npc = CreatePed(0, Config.NPCModel, Config.NPCLocation.coords, Config.NPCLocation.heading, false, true)
+
+        local npc = CreatePed(0, Config.PirateNPCModel, Config.PirateNPCLocation.x, Config.PirateNPCLocation.y, Config.PirateNPCLocation.z - 1.0, Config.PirateNPCLocation.w, false, true)
         FreezeEntityPosition(npc, true)
         SetEntityInvincible(npc, true)
         SetBlockingOfNonTemporaryEvents(npc, true)
@@ -139,7 +143,7 @@ CreateThread(function()
                         label = 'Start Treasure Hunt',
                         action = function()
                             StartTreasureHunt()
-                        end
+                        end,
                     }
                 },
                 distance = 2.5
@@ -147,21 +151,25 @@ CreateThread(function()
         else
             CreateThread(function()
                 while true do
-                    local sleep = 1000
+                    Wait(0)
                     local playerCoords = GetEntityCoords(PlayerPedId())
-                    if #(playerCoords - Config.NPCLocation.coords) < 2.0 then
-                        sleep = 5
-                        DrawText3D(Config.NPCLocation.coords.x, Config.NPCLocation.coords.y, Config.NPCLocation.coords.z + 1.0, "Press ~g~E~w~ to start Treasure Hunt")
+                    if #(playerCoords - Config.PirateNPCLocation.xyz) < 2.0 then
+                        DrawText3D(Config.PirateNPCLocation.x, Config.PirateNPCLocation.y, Config.PirateNPCLocation.z + 1.0, "Press ~g~E~w~ to start treasure hunt")
                         if IsControlJustReleased(0, 38) then
                             StartTreasureHunt()
                         end
                     end
-                    Wait(sleep)
                 end
             end)
         end
     end
 end)
+
+
+RegisterNetEvent('vd-treasurehunt:useMap', function()
+    StartTreasureHunt()
+end)
+
 
 function DrawText3D(x, y, z, text)
     SetTextScale(0.35, 0.35)
@@ -171,7 +179,7 @@ function DrawText3D(x, y, z, text)
     SetTextEntry("STRING")
     SetTextCentre(true)
     AddTextComponentString(text)
-    SetDrawOrigin(x,y,z, 0)
+    SetDrawOrigin(x, y, z, 0)
     DrawText(0.0, 0.0)
     ClearDrawOrigin()
 end
