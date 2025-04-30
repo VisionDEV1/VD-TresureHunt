@@ -1,5 +1,5 @@
 [![TREASURE-HUNT.png](https://i.postimg.cc/Kc3QPPDc/TREASURE-HUNT.png)](https://postimg.cc/nMZvZQWN)
-# VD-TreasureHunt
+# VD-TreasureHunt - W.I.P
 
 An interactive treasure hunt script for QBCore.
 start a treasure hunt either by using a custom Treasure Map item or talking to a pirate NPC. Follow clues across the map, find hidden locations, and dig up a randomized reward!
